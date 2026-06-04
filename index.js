@@ -29,6 +29,8 @@ const BASE_URL = process.env.FFMATE_URL;
 
 // ffmate task webhook (optional). See submitTask() for where it's attached.
 const FFMATE_WEBHOOK_URL = process.env.FFMATE_WEBHOOK_URL || "";
+// task.updated fires on every status/progress change — best for live tracking.
+const FFMATE_WEBHOOK_EVENT = process.env.FFMATE_WEBHOOK_EVENT || "task.updated";
 
 // Directus
 const DIRECTUS_URL = (process.env.DIRECTUS_URL || "").replace(/\/+$/, "");
@@ -259,12 +261,14 @@ const getTaskId = (task) => task.uuid || task.id;
 async function submitTask(payload) {
   const body = { ...payload };
 
-  // ── ffmate webhook hook point ──────────────────────────────────────────
-  // ffmate can POST task state changes to a URL. Set FFMATE_WEBHOOK_URL and
-  // adjust the field name/shape below to match YOUR ffmate version's task
-  // schema (some expect `webhooks: [{ event, url }]`, others `webhook: {url}`).
+  // ── ffmate webhook ─────────────────────────────────────────────────────
+  // ffmate POSTs task state changes to these URLs. Shape per ffmate docs:
+  //   "webhooks": [ { "event": "task.updated", "url": "https://..." } ]
+  // The payload carries the task (uuid, status, progress) and its `metadata`,
+  // so include content_id/job_id in metadata (below) to correlate the callback
+  // back to the right media_job.
   if (FFMATE_WEBHOOK_URL) {
-    body.webhook = { url: FFMATE_WEBHOOK_URL }; // TODO: confirm field per ffmate docs
+    body.webhooks = [{ event: FFMATE_WEBHOOK_EVENT, url: FFMATE_WEBHOOK_URL }];
   }
 
   return withRetry(
@@ -592,6 +596,12 @@ async function processJob(client, job) {
       inputFile: ctx.inputFile,
       outputFile: `${ctx.workdir}/${rung.h}p.mp4`,
       priority: 10,
+      metadata: {
+        content_id: ctx.contentId,
+        job_id: ctx.jobId,
+        stage: "encode",
+        rendition: `${rung.h}p`,
+      },
     });
     tasks[`r${rung.h}`] = { id: getTaskId(t), rung };
   }
@@ -616,6 +626,11 @@ async function processJob(client, job) {
     outputFile: `${ctx.workdir}/hls/master.m3u8`,
     priority: 10,
     preProcessing: { scriptPath: `mkdir -p ${dirs}` },
+    metadata: {
+      content_id: ctx.contentId,
+      job_id: ctx.jobId,
+      stage: "package",
+    },
   });
   await waitForTask(getTaskId(hls), "HLS Packaging");
   log("🎬 HLS completed");
