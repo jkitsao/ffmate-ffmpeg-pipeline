@@ -40,6 +40,10 @@ const DIRECTUS_TOKEN =
 // Worker
 const ENCODER_NODE = process.env.ENCODER_NODE || os.hostname();
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 3000);
+// ffmate-specific: poll its SQLite-backed API less aggressively, and cap how
+// many encode tasks run at once (each concurrent task = concurrent DB writes).
+const FFMATE_POLL_MS = Number(process.env.FFMATE_POLL_MS || 5000);
+const ENCODE_CONCURRENCY = Number(process.env.ENCODE_CONCURRENCY || 2);
 const CLEANUP_AFTER = process.env.CLEANUP_AFTER === "1";
 
 // media_jobs status vocabulary (must match the Directus field's allowed values)
@@ -130,6 +134,10 @@ async function httpJson(url, opts = {}, timeoutMs = 30000) {
 }
 
 function transient(err) {
+  const msg = String(err?.message || "");
+  // ffmate's embedded SQLite briefly locks under concurrent writes — always retry it,
+  // even though it surfaces as a 400 (code 001.000.0003 / "database is locked").
+  if (/database is locked|SQLITE_BUSY|001\.000\.0003/i.test(msg)) return true;
   if (err.status == null) return true;
   return err.status >= 500 || err.status === 429;
 }
@@ -293,6 +301,9 @@ async function waitForTask(taskId, label, maxWaitMs = 6 * 60 * 60 * 1000) {
   log(`Waiting for ${label}`, { taskId });
   const start = Date.now();
   let lastStatus = null;
+  let pollErrors = 0;
+  const MAX_POLL_ERRORS = 40; // ~3+ min of continuous unreachability before giving up
+  const jitter = () => FFMATE_POLL_MS + Math.floor(Math.random() * 1000);
 
   while (true) {
     if (Date.now() - start > maxWaitMs) {
@@ -300,7 +311,28 @@ async function waitForTask(taskId, label, maxWaitMs = 6 * 60 * 60 * 1000) {
         `${label} timed out after ${Math.round(maxWaitMs / 1000)}s`,
       );
     }
-    const task = await getTask(taskId);
+
+    let task;
+    try {
+      task = await getTask(taskId);
+      pollErrors = 0;
+    } catch (e) {
+      // ffmate busy/locked/briefly down — the ffmpeg job keeps running. Do NOT
+      // fail the media_job over a status-poll hiccup; just keep watching.
+      pollErrors++;
+      log(`Poll hiccup for ${label} (ignored)`, {
+        error: e.message,
+        count: pollErrors,
+      });
+      if (pollErrors >= MAX_POLL_ERRORS) {
+        throw new Error(
+          `${label}: lost contact with ffmate after ${pollErrors} polls`,
+        );
+      }
+      await sleep(jitter());
+      continue;
+    }
+
     if (task.status !== lastStatus || task.status === "RUNNING") {
       log(`Status: ${label}`, { status: task.status, progress: task.progress });
       lastStatus = task.status;
@@ -316,7 +348,7 @@ async function waitForTask(taskId, label, maxWaitMs = 6 * 60 * 60 * 1000) {
         `${label} failed (${task.status}): ${ffErr || "see ffmate logs"}`,
       );
     }
-    await sleep(3000);
+    await sleep(jitter());
   }
 }
 
@@ -588,26 +620,32 @@ async function processJob(client, job) {
     hasAudio: src.hasAudio,
   });
 
-  const tasks = {};
-  for (const rung of rungs) {
-    const t = await submitTask({
-      name: `encode_${rung.h}p`,
-      command: encodeCommand(rung, src.fps, src.hasAudio),
-      inputFile: ctx.inputFile,
-      outputFile: `${ctx.workdir}/${rung.h}p.mp4`,
-      priority: 10,
-      metadata: {
-        content_id: ctx.contentId,
-        job_id: ctx.jobId,
-        stage: "encode",
-        rendition: `${rung.h}p`,
-      },
-    });
-    tasks[`r${rung.h}`] = { id: getTaskId(t), rung };
+  // Encode in bounded batches. Running every rung at once means N concurrent
+  // ffmpeg processes all writing progress to ffmate's single-writer SQLite —
+  // that is what triggers "database is locked". ENCODE_CONCURRENCY caps it.
+  for (let i = 0; i < rungs.length; i += ENCODE_CONCURRENCY) {
+    const batch = rungs.slice(i, i + ENCODE_CONCURRENCY);
+    const submitted = [];
+    for (const rung of batch) {
+      const t = await submitTask({
+        name: `encode_${rung.h}p`,
+        command: encodeCommand(rung, src.fps, src.hasAudio),
+        inputFile: ctx.inputFile,
+        outputFile: `${ctx.workdir}/${rung.h}p.mp4`,
+        priority: 10,
+        metadata: {
+          content_id: ctx.contentId,
+          job_id: ctx.jobId,
+          stage: "encode",
+          rendition: `${rung.h}p`,
+        },
+      });
+      submitted.push({ id: getTaskId(t), rung });
+    }
+    await Promise.all(
+      submitted.map(({ id, rung }) => waitForTask(id, `${rung.h}p`)),
+    );
   }
-  await Promise.all(
-    Object.values(tasks).map(({ id, rung }) => waitForTask(id, `${rung.h}p`)),
-  );
   for (const rung of rungs) {
     const hostFile = toHost(`${ctx.workdir}/${rung.h}p.mp4`);
     if (!fs.existsSync(hostFile) || fs.statSync(hostFile).size === 0) {
