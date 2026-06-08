@@ -9,7 +9,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
 } from "@aws-sdk/client-s3"; // npm install @aws-sdk/client-s3
-require("dotenv").config();
+import "dotenv/config";
 /* ============================================================================
  * OTT TRANSCODING WORKER  (Directus media_jobs + ffmate + Cloudflare R2)
  *
