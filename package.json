@@ -4,14 +4,15 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start":"node --env-file=.env index.js"
+    "start": "pm2 start --env-file=.env index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1061.0"
+    "@aws-sdk/client-s3": "^3.1061.0",
+    "dotenv": "^17.4.2"
   },
-   "type": "module" 
+  "type": "module"
 }
