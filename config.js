@@ -4,7 +4,7 @@
 // or add a profile here without touching the orchestration logic.
 
 import os from "os";
-
+import "dotenv/config";
 // ============================================================================
 // Config (env-driven)
 // ============================================================================
@@ -81,11 +81,11 @@ export const toHost = (p) =>
 const LADDER = [
   { h: 2160, crf: 19, maxK: 16000, bufK: 32000, aK: 192 },
   { h: 1440, crf: 19, maxK: 11000, bufK: 22000, aK: 192 },
-  { h: 1080, crf: 20, maxK: 8000,  bufK: 16000, aK: 192 },
-  { h: 720,  crf: 20, maxK: 4500,  bufK: 9000,  aK: 128 },
-  { h: 540,  crf: 21, maxK: 2500,  bufK: 5000,  aK: 128 },
-  { h: 360,  crf: 22, maxK: 1200,  bufK: 2400,  aK: 96 },
-  { h: 240,  crf: 23, maxK: 700,   bufK: 1400,  aK: 64 },
+  { h: 1080, crf: 20, maxK: 8000, bufK: 16000, aK: 192 },
+  { h: 720, crf: 20, maxK: 4500, bufK: 9000, aK: 128 },
+  { h: 540, crf: 21, maxK: 2500, bufK: 5000, aK: 128 },
+  { h: 360, crf: 22, maxK: 1200, bufK: 2400, aK: 96 },
+  { h: 240, crf: 23, maxK: 700, bufK: 1400, aK: 64 },
 ];
 
 function buildLadder(srcHeight) {
@@ -99,7 +99,9 @@ function buildLadder(srcHeight) {
   }
   // test helpers: LADDER_HEIGHTS=720,240 to encode only those; MAX_RUNGS=1 to cap
   const only = (process.env.LADDER_HEIGHTS || "")
-    .split(",").map((s) => Number(s.trim())).filter(Boolean);
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter(Boolean);
   if (only.length) rungs = rungs.filter((r) => only.includes(r.h));
   const maxR = Number(process.env.MAX_RUNGS || 0);
   if (maxR > 0) rungs = rungs.slice(0, maxR);
@@ -112,7 +114,8 @@ function buildLadder(srcHeight) {
 // IMPORTANT: -rc / -cq / -preanalysis are encoder-PRIVATE options. They are
 // valid only here, after -c:v <gpu encoder>. libx264 must NOT receive -rc.
 // ============================================================================
-const gopFor = (fps) => Math.max(2, Math.round((fps || 30) * Config.SEGMENT_SEC));
+const gopFor = (fps) =>
+  Math.max(2, Math.round((fps || 30) * Config.SEGMENT_SEC));
 const kfExpr = () =>
   `-force_key_frames "expr:gte(t,n_forced*${Config.SEGMENT_SEC})"`;
 

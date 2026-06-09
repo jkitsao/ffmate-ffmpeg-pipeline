@@ -9,7 +9,7 @@ import {
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
 import { Config, STATUS, toHost, Commands } from "./config.js";
-
+import "dotenv/config";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function log(message, data = null) {
