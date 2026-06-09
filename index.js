@@ -481,14 +481,15 @@ async function processJob(client, job) {
 
   // 3. Package Stream Variants Into Multi-Bitrate fMP4 HLS Playlist
   await setJobStatus(ctx.jobId, STATUS.PACKAGING);
-  const dirs = rungs.map((_, idx) => `${ctx.workdir}/hls/v${idx}`).join(" ");
+  // ffmpeg's HLS muxer does NOT create directories — make the (single, flat)
+  // hls/ output dir ourselves. The missing dir was what failed packaging.
+  fs.mkdirSync(ctx.localHlsDir, { recursive: true });
   const hls = await submitTask({
     name: "hls_packaging",
     command: Commands.hlsCommand(ctx, rungs, src.hasAudio),
     inputFile: `${ctx.workdir}/${rungs[0].h}p.mp4`,
     outputFile: `${ctx.workdir}/hls/master.m3u8`,
     priority: 10,
-    preProcessing: { scriptPath: `mkdir -p ${dirs}` },
     // METADATA RESTORED: Syncs final packaging lifecycle alerts with frontend dashboard
     metadata: {
       content_id: ctx.contentId,
